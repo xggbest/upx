@@ -875,8 +875,8 @@ off_t PackLinuxElf64::pack3(OutputFile *fo, Filter &ft)
                     }
                 }
                 else if (xct_off < ioff) { // Slide subsequent PT_LOAD.
-                    if ((1u<<12) < align
-                    &&  Elf64_Ehdr::EM_X86_64 == e_machine  // FIXME: other $ARCH ?
+                    if (!saved_opt_android_shlib  // do not change Android 16K aligned
+                    && (1u<<12) < align  // but do trim 2MB pages on AMD64 (non-Android)
                     ) {
                         align = 1u<<12;
                         set_te64(&phdr->p_align, align);
@@ -1269,6 +1269,7 @@ PackLinuxElf64arm::getFilters() const
 {
     static const int filters[] = {
         0x52,
+        0x53,
     FT_END };
     return filters;
 }
@@ -6487,8 +6488,9 @@ unsigned PackLinuxElf64::forward_Shdrs(OutputFile *fo, Elf64_Ehdr *const eho)
         return 0;
     }
     unsigned penalty = total_out;
-    if (Elf64_Ehdr::EM_AARCH64 == e_machine
-    &&  saved_opt_android_shlib) { // Forward select _Shdr
+    if ((Elf64_Ehdr::EM_AARCH64 == e_machine
+      || Elf64_Ehdr::EM_X86_64  == e_machine)
+    && saved_opt_android_shlib) { // Forward select _Shdr
         // Keep _Shdr for rtld data (below xct_off).
         // Discard _Shdr for compressed regions, except ".text" for gdb.
         // Keep _Shdr with SHF_WRITE.

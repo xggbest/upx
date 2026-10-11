@@ -354,8 +354,6 @@ static int s_ct24arm_be(Filter *f) {
 // 26-bit ARM calltrick ("naive")
 **************************************************************************/
 
-#if 1 //{ old reliable
-
 #define CT26ARM_LE(f, cond, addvalue, get, set)                                                    \
     byte *b = f->buf;                                                                              \
     byte *b_end = b + f->buf_len - 4;                                                              \
@@ -386,19 +384,17 @@ static int s_ct26arm_le(Filter *f) {
     CT26ARM_LE(f, ARMCT_COND, a + f->addvalue, get_le26, set_dummy)
 }
 
-#else //}{ new enhanced but DIFFERENT; need new filter type!
-
 static int CTarm64(Filter *f, int dir) { // dir: 1, 0, -1
     byte *b = f->buf;                    // will be incremented
     byte *const b_end = b + f->buf_len - 4;
     do {
         const unsigned a = b - f->buf;
-        const int d = dir * (f->addvalue + (a >> 2));
+        const unsigned d = dir * (a >> 2);
         const unsigned v = get_le32(b);   // the 32-bit instruction
         if (0x05 == (0x1f & (v >> 26))) { // b, bl
             f->lastcall = a;
             if (dir)
-                set_le26(b, v + d);
+                set_le26(b, v + d + dir * f->addvalue);
             f->calls++;
         } else if ((0x54 == (v >> 24))             // b.cond
                    || (0x1a == ((v >> 25) & 0x3f)) // cb{z,nz}
@@ -414,7 +410,7 @@ static int CTarm64(Filter *f, int dir) { // dir: 1, 0, -1
             f->calls++;
         }
         b += 4;
-    } while (b < b_end);
+    } while (b <= b_end);
     if (f->lastcall)
         f->lastcall += 4;
     return 0;
@@ -426,7 +422,50 @@ static int u_CTarm64_le(Filter *f) { return CTarm64(f, -1); }
 
 static int s_CTarm64_le(Filter *f) { return CTarm64(f, 0); }
 
-#endif //}
+TEST_CASE("ARM64 enhanced filter conditional offsets") {
+    const unsigned instructions[] = {
+        0xd503201f, 0x94000002, 0x54000021, 0x34000044, 0x36000065, 0xd503201f,
+    };
+    for (unsigned addvalue : {0u, 0x1000u, 0xfffffff0u}) {
+        CAPTURE(addvalue);
+        byte buf[sizeof(instructions)];
+        for (unsigned i = 0; i < sizeof(instructions) / sizeof(instructions[0]); ++i)
+            set_le32(buf + 4 * i, instructions[i]);
+        Filter f(3);
+        f.buf = buf;
+        f.buf_len = sizeof(buf);
+        f.addvalue = addvalue;
+        REQUIRE(CTarm64(&f, 1) == 0);
+        CHECK(get_le32(buf + 4) == (0x94000000 | ((addvalue + 3) & 0x03ffffff)));
+        CHECK(get_le32(buf + 8) == 0x54000061);
+        CHECK(get_le32(buf + 12) == 0x340000a4);
+        CHECK(get_le32(buf + 16) == 0x360000e5);
+        REQUIRE(CTarm64(&f, -1) == 0);
+        for (unsigned i = 0; i < sizeof(instructions) / sizeof(instructions[0]); ++i)
+            CHECK(get_le32(buf + 4 * i) == instructions[i]);
+    }
+}
+
+TEST_CASE("ARM64 enhanced filter final instruction") {
+    for (unsigned len = 8; len <= 11; ++len) {
+        CAPTURE(len);
+        byte buf[11];
+        set_le32(buf, 0xd503201f);
+        set_le32(buf + 4, 0x14000000);
+        memset(buf + 8, 0xa5, 3);
+        Filter f(3);
+        f.buf = buf;
+        f.buf_len = len;
+        REQUIRE(CTarm64(&f, 1) == 0);
+        CHECK(get_le32(buf + 4) == 0x14000001);
+        CHECK(f.calls == 1);
+        REQUIRE(CTarm64(&f, -1) == 0);
+        CHECK(get_le32(buf) == 0xd503201f);
+        CHECK(get_le32(buf + 4) == 0x14000000);
+        for (unsigned i = 8; i < sizeof(buf); ++i)
+            CHECK(buf[i] == 0xa5);
+    }
+}
 
 #undef CT26ARM_LE
 #undef ARMCT_COND
