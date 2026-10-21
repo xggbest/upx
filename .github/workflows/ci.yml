@@ -16,7 +16,9 @@ env:
   CTEST_OUTPUT_ON_FAILURE: 'ON'
   DEBIAN_FRONTEND: noninteractive
   NO_COLOR: 1
+  REMOTE_REF_NAME: ${{ github.event.pull_request.head.ref || github.ref_name }}
   REMOTE_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
+  REMOTE_SERVER_URL: ${{ github.server_url }}
   UPX_CMAKE_BUILD_FLAGS: --verbose
   UPX_CMAKE_CONFIG_FLAGS: -Wdev --warn-uninitialized
   UPX_CONFIG_HAVE_WORKING_BUILD_RPATH: 'ON'
@@ -54,14 +56,17 @@ jobs:
           # install upx-stubtools
           curl -sS -L https://github.com/upx/upx-stubtools/releases/download/v20221212/bin-upx-20221212.tar.xz | tar -xJ
       - run: dpkg -l
-      - name: ${{ format('Check out {0} source code', github.ref_name) }}
+      - name: ${{ format('Check out {0} source code', env.REMOTE_REF_NAME) }}
         run: |
           set -x
-          echo git clone --branch "$GITHUB_REF_NAME" --depth 1 "$GITHUB_SERVER_URL/$REMOTE_REPOSITORY" .
-          echo git clone --branch "$GITHUB_REF_NAME" --depth 1 "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" .
-          echo git clone --branch "$GITHUB_REF_NAME" --depth 1 "$GITHUB_SERVER_URL/$GITHUB_ACTION_REPOSITORY" .
+          echo "${{ github.event.pull_request.base.repo.full_name }}"
+          echo "${{ github.event.pull_request.base.ref }}"
+          echo "${{ github.event.pull_request.base.ref_name }}"
+          echo "${{ github.event.pull_request.head.repo.full_name }}"
+          echo "${{ github.event.pull_request.head.ref }}"
+          echo "${{ github.event.pull_request.head.ref_name }}"
           git config --global --add safe.directory '*' # needed when running in a container
-          git clone --branch "$GITHUB_REF_NAME" --depth 1 "$GITHUB_SERVER_URL/$REMOTE_REPOSITORY" .
+          git clone --branch "$REMOTE_REF_NAME" --depth 1 "$REMOTE_SERVER_URL/$REMOTE_REPOSITORY" .
           git submodule update --init
           git fsck --strict --progress
       - run: ls -laF "$HOME" "$GITHUB_WORKSPACE" || true
@@ -125,10 +130,10 @@ jobs:
         run: apk update && apk upgrade && apk add bash clang clang-dev cmake coreutils file g++ git make parallel strace tar util-linux xz zstd
       - run: set -x; cat /etc/alpine-release || true
       - run: (apk info -v | LC_ALL=C sort) || true
-      - name: ${{ format('Check out {0} source code', github.ref_name) }}
+      - name: ${{ format('Check out {0} source code', env.REMOTE_REF_NAME) }}
         run: |
           git config --global --add safe.directory '*' # needed when running in a container
-          git clone --branch "$GITHUB_REF_NAME" --depth 1 "$GITHUB_SERVER_URL/$REMOTE_REPOSITORY" .
+          git clone --branch "$REMOTE_REF_NAME" --depth 1 "$REMOTE_SERVER_URL/$REMOTE_REPOSITORY" .
           git submodule update --init
           git clone --depth=1 https://github.com/upx/upx-testsuite ../upx-testsuite
           # prepare environment
@@ -691,8 +696,13 @@ jobs:
         run: |
           git clone --depth=1 https://github.com/upx/upx-testsuite ../deps/upx-testsuite
           mkdir -p -v build/$C/$B/{bzip2,ucl,upx,zlib,zstd}
-          repository_name="${REMOTE_REPOSITORY##*/}" # basename
-          echo "H=d:\\a\\$repository_name\\$repository_name" >> $GITHUB_ENV
+          #repository_name="${REMOTE_REPOSITORY##*/}" # basename
+          #echo "H=d:\\a\\$repository_name\\$repository_name" >> $GITHUB_ENV
+          echo "$PWD"; ls -laF
+          H="$PWD"
+          H="${H/#\/c\//C:\/}"
+          H="${H/#\/d\//D:\/}"
+          echo "H=$H" >> $GITHUB_ENV
       # uses: ilammy/msvc-dev-cmd@v1
       - uses: m-doughty/msvc-dev-cmd@node24-v1
         with: { vsversion: '${{ matrix.vsversion }}', arch: '${{ matrix.vsarch }}' }
