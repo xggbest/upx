@@ -171,9 +171,16 @@ jobs:
           apt-get update && apt-get upgrade -y
           apt-get install -y --no-install-recommends bash ca-certificates cmake curl file git make ninja-build parallel strace tar time tree util-linux xz-utils zstd
           apt-get install -y qemu-user "${{ matrix.target }}"
+      - name: ${{ format('QEMU {0}', matrix.container) }}
+        run: |
+          set -x
+          ls -ldF /usr/bin/qemu* || true
+          for qemu in /usr/bin/qemu*; do
+            ls -ldF "$qemu" || true
+            ldd "$qemu" || true
+          done
       - name: ${{ format('Install MinGW posix-threads {0}', matrix.container) }}
         run: |
-          ls -ldF /usr/bin/qemu* || true
           # make sure that we use posix-threads (pthread/winpthreads) and NOT win32-threads
           ls -ldF /etc/alternatives/*mingw* || true
           for f in i686-w64-mingw32-g++ i686-w64-mingw32-gcc x86_64-w64-mingw32-g++ x86_64-w64-mingw32-gcc; do
@@ -360,6 +367,10 @@ jobs:
         run: |
           set -x
           export upx_exe_runner="${{ matrix.qemu }}"
+          qemu="${upx_exe_runner##*/}" # basename
+          qemu="${qemu%% *}"
+          ls -ldF "/usr/bin/$qemu" || true
+          ldd "/usr/bin/$qemu" || true
           upx_exe_runner="$upx_exe_runner -L /usr/${toolchain}"
           UPX_DEBUG_DOCTEST_VERBOSE=1 $upx_exe_runner ./build/xtarget/${toolchain}/debug/upx --sysinfo -vv || true
           UPX_DEBUG_DOCTEST_VERBOSE=1 $upx_exe_runner ./build/xtarget/${toolchain}/release/upx --sysinfo -vv
