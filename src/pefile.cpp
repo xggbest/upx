@@ -289,6 +289,38 @@ void PeFile::Interval::clear() {
         memset(base + ivarr[ic].start, 0, ivarr[ic].len);
 }
 
+// cheap sanity check of flatten() output: no wrap-around, sorted, disjoint
+void PeFile::Interval::check_flat() const {
+    for (unsigned ic = 0; ic < ivnum; ic++) {
+        const unsigned start = ivarr[ic].start, end = start + ivarr[ic].len;
+        if (end < start || (ic > 0 && start <= ivarr[ic - 1].start + ivarr[ic - 1].len))
+            throwInternalError("bad Interval");
+    }
+}
+
+void PeFile::Interval::clear(const Interval &keep) {
+    check_flat();
+    keep.check_flat();
+    unsigned jc = 0;
+    for (unsigned ic = 0; ic < ivnum; ic++) {
+        unsigned pos = ivarr[ic].start;
+        const unsigned end = pos + ivarr[ic].len;
+        while (jc < keep.ivnum && keep.ivarr[jc].start + keep.ivarr[jc].len <= pos)
+            jc++;
+        while (pos < end && jc < keep.ivnum && keep.ivarr[jc].start < end) {
+            const unsigned next = keep.ivarr[jc].start;
+            if (pos < next)
+                memset(base + pos, 0, next - pos);
+            pos = UPX_MAX(pos, keep.ivarr[jc].start + keep.ivarr[jc].len);
+            if (pos >= end)
+                break;
+            jc++;
+        }
+        if (pos < end)
+            memset(base + pos, 0, end - pos);
+    }
+}
+
 void PeFile::Interval::dump() const {
     printf("%d intervals:\n", ivnum);
     for (unsigned ic = 0; ic < ivnum; ic++)
@@ -1726,6 +1758,8 @@ const byte *PeFile::Resource::ntype() const { return current->parent->parent->na
 
 unsigned PeFile::Resource::size() const { return ALIGN_UP(current->data.size, 4u); }
 
+unsigned PeFile::Resource::rawsize() const { return current->data.size; }
+
 unsigned PeFile::Resource::offs() const { return current->data.offset; }
 
 unsigned &PeFile::Resource::newoffs() { return current->newoffset; }
@@ -2070,6 +2104,7 @@ void PeFile::processResources(Resource *res) {
     unsigned unum = 0;
     unsigned cnum = 0;
 
+    Interval clear_resources(ibuf), keep_resources(ibuf);
     while (res->next()) {
         const unsigned rtype = res->itype();
         bool do_compress = true;
@@ -2098,6 +2133,10 @@ void PeFile::processResources(Resource *res) {
                                   opt->win32_pe.keep_resource);
 
         if (do_compress) {
+            if (!opt->exact) {
+                ICHECK(ibuf + res->offs(), res->rawsize());
+                keep_resources.add_interval(res->offs(), res->rawsize());
+            }
             csize += res->size();
             cnum++;
             continue;
@@ -2112,7 +2151,7 @@ void PeFile::processResources(Resource *res) {
         ICHECK(ibuf + res->offs(), take);
         memcpy(ores, ibuf.subref("bad resoff %#x", res->offs(), take), take);
         if (!opt->exact)
-            ibuf.fill(res->offs(), take, FILLVAL);
+            clear_resources.add_interval(res->offs(), take);
         res->newoffs() = ptr_diff_bytes(ores, oresources);
         if (rtype == RT_ICON && opt->win32_pe.compress_icons == 1)
             compress_icon = true;
@@ -2127,6 +2166,16 @@ void PeFile::processResources(Resource *res) {
         ores += res->size();
     }
     soresources = ptr_diff_bytes(ores, oresources);
+
+    if (!opt->exact) {
+        // Copy all uncompressed resources before clearing their source bytes:
+        // aligned sizes can overlap a neighbour, regardless of traversal order.
+        // Still clear alignment holes, but preserve any resource data that will
+        // be compressed in place (including data overlapping a copied resource).
+        clear_resources.flatten();
+        keep_resources.flatten();
+        clear_resources.clear(keep_resources);
+    }
 
     if (!opt->exact && !res->clear()) {
         // The area occupied by the resource directory is not continuous

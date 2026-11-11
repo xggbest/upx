@@ -398,9 +398,11 @@ protected:
         void flatten();
 
         void clear();
+        void clear(const Interval &keep); // both interval lists must be flattened
         void dump() const;
 
     private:
+        void check_flat() const;
         static int __acc_cdecl_qsort compare(const void *p1, const void *p2);
     };
 
@@ -481,6 +483,7 @@ protected:
         unsigned itype() const;
         const byte *ntype() const;
         unsigned size() const;
+        unsigned rawsize() const;
         unsigned offs() const;
         unsigned &newoffs();
 
